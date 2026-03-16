@@ -3,11 +3,18 @@ import { ExpenseCategory } from "../types";
 
 // The API key must be obtained exclusively from the environment variable process.env.API_KEY.
 // We assume process.env.API_KEY is pre-configured and accessible.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Helper to get env variable safely in both dev and production
+const getEnv = (key: string) => {
+  // @ts-ignore
+  return import.meta.env?.[key] || (typeof process !== 'undefined' ? process.env?.[key] : '') || '';
+};
+
+const apiKey = getEnv("VITE_GEMINI_API_KEY") || getEnv("API_KEY");
+const ai = new GoogleGenAI({ apiKey });
 
 export const categorizeExpense = async (description: string): Promise<ExpenseCategory> => {
-  if (!process.env.API_KEY) {
-    console.warn("API Key missing, defaulting to Other. Please set API_KEY in your environment.");
+  if (!apiKey) {
+    console.warn("API Key missing, defaulting to Other. Please set VITE_GEMINI_API_KEY in your environment.");
     return ExpenseCategory.Other;
   }
 
