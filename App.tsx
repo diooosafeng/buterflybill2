@@ -461,7 +461,6 @@ const App: React.FC = () => {
                    <Plus size={40} className="text-blue-600" />
                  </div>
                  <span className="text-xl font-black text-blue-600 mt-2 tracking-tight">创建你的第一个分账活动</span>
-                 <p className="text-xs text-blue-600 mt-2 font-medium">开启云端实时同步分账体验</p>
                </button>
             </div>
           )}
@@ -507,33 +506,32 @@ const App: React.FC = () => {
     <div className="h-[100dvh] bg-gray-50 flex flex-col max-w-lg mx-auto shadow-2xl relative overflow-hidden">
       {/* Header */}
       <div className="bg-white px-4 pt-12 pb-4 sticky top-0 z-10 border-b border-gray-100 shadow-sm flex-shrink-0">
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between mb-2 relative min-h-[32px]">
            <button 
             onClick={goHome}
-            className="flex items-center text-blue-600 font-medium active:opacity-50"
+            className="flex items-center text-blue-600 font-medium active:opacity-50 z-10"
           >
             <ArrowLeft size={20} className="mr-1" />
             首页
           </button>
-          <div className="flex-1 flex justify-center px-2 min-w-0">
-            <div className="flex items-center space-x-1.5 min-w-0">
-              <h1 className="text-lg font-bold truncate">{activeEvent.name}</h1>
-              <div className="flex-shrink-0">
-                {!isOnline ? (
-                  <CloudOff size={16} className="text-red-500" />
-                ) : !isSocketConnected ? (
-                  <div className="flex items-center text-blue-500">
-                    <Cloud size={16} />
-                    <span className="text-[10px] font-black ml-0.5 leading-none animate-pulse">...</span>
-                  </div>
-                ) : (
-                  <Cloud size={16} className="text-green-500" />
-                )}
-              </div>
+          
+          <div className="absolute left-1/2 -translate-x-1/2 flex items-center space-x-1.5 max-w-[45%] z-0">
+            <h1 className="text-lg font-bold truncate">{activeEvent.name}</h1>
+            <div className="flex-shrink-0">
+              {!isOnline ? (
+                <CloudOff size={16} className="text-red-500" />
+              ) : !isSocketConnected ? (
+                <div className="flex items-center text-blue-500">
+                  <Cloud size={16} />
+                  <span className="text-[10px] font-black ml-0.5 leading-none animate-pulse">...</span>
+                </div>
+              ) : (
+                <Cloud size={16} className="text-green-500" />
+              )}
             </div>
           </div>
           
-          <div className="flex space-x-2">
+          <div className="flex items-center space-x-2 z-10">
              <button 
                onClick={() => setShowShareModal(true)}
                className="h-8 px-3 flex items-center justify-center text-white bg-blue-600 hover:bg-blue-700 rounded-full transition-colors text-xs font-bold shadow-md shadow-blue-200"
