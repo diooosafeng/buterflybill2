@@ -11,6 +11,7 @@ export enum ExpenseCategory {
 export enum PaymentMethod {
   WeChat = '微信',
   Alipay = '支付宝',
+  BankCard = '银行卡',
   Cash = '现金',
   CreditCard = '信用卡',
   Other = '其他'
@@ -38,6 +39,7 @@ export interface PartyEvent {
   name: string;
   startDate: number; // timestamp
   endDate: number; // timestamp
+  createdAt: number; // For sorting
   members: Member[];
   expenses: Expense[];
   isSettled: boolean;

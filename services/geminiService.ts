@@ -5,16 +5,28 @@ import { ExpenseCategory } from "../types";
 // We assume process.env.API_KEY is pre-configured and accessible.
 // Helper to get env variable safely in both dev and production
 const getEnv = (key: string) => {
+  // Vite uses import.meta.env for client-side variables
   // @ts-ignore
-  return import.meta.env?.[key] || (typeof process !== 'undefined' ? process.env?.[key] : '') || '';
+  const viteEnv = import.meta.env?.[key];
+  if (viteEnv) return viteEnv;
+
+  // Fallback for other environments
+  try {
+    if (typeof process !== 'undefined' && process.env?.[key]) {
+      return process.env[key];
+    }
+  } catch (e) {}
+  
+  return '';
 };
 
-const apiKey = getEnv("VITE_GEMINI_API_KEY") || getEnv("API_KEY");
-const ai = new GoogleGenAI({ apiKey });
+// Check for multiple possible keys: VITE_GEMINI_API_KEY (Vercel) or GEMINI_API_KEY (AI Studio)
+const apiKey = getEnv("VITE_GEMINI_API_KEY") || getEnv("GEMINI_API_KEY");
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export const categorizeExpense = async (description: string): Promise<ExpenseCategory> => {
-  if (!apiKey) {
-    console.warn("API Key missing, defaulting to Other. Please set VITE_GEMINI_API_KEY in your environment.");
+  if (!ai || !apiKey) {
+    console.warn("Gemini API Key missing. Please set VITE_GEMINI_API_KEY in Vercel settings.");
     return ExpenseCategory.Other;
   }
 

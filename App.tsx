@@ -1,18 +1,20 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PartyEvent, Expense } from './types';
-import { Plus, Receipt, PieChart as PieIcon, ArrowLeft, Settings, Share2, Cloud, History, Loader2, AlertTriangle, Wallet, Users } from 'lucide-react';
+import { Plus, Receipt, PieChart as PieIcon, ArrowLeft, Settings, Share2, Cloud, History, Loader2, AlertTriangle, Wallet, Users, X, CloudOff, CheckCircle2 } from 'lucide-react';
 import { NewEventModal } from './components/NewEventModal';
 import { AddExpenseModal } from './components/AddExpenseModal';
 import { EventCard } from './components/EventCard';
 import { SettlementView } from './components/SettlementView';
 import { ShareEventModal } from './components/ShareEventModal';
-import { saveEventToCloud, subscribeToEvent, deleteEventFromCloud } from './services/eventService';
+import { JoinEventModal } from './components/JoinEventModal';
+import { saveEventToCloud, subscribeToEvent, deleteEventFromCloud, socket } from './services/eventService';
 
 // History Item stored locally
 interface HistoryItem {
   id: string;
   name: string;
   lastVisited: number;
+  createdAt: number;      // Added for fixed sorting
   memberCount?: number;     // Added for list preview
   memberAvatars?: string[]; // Added for list preview (limit to 3-4)
 }
@@ -36,14 +38,25 @@ const App: React.FC = () => {
   });
 
   // UI State
+  const [joinCode, setJoinCode] = useState('');
+  const [isJoining, setIsJoining] = useState(false);
+  const [showJoinModal, setShowJoinModal] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [currentTab, setCurrentTab] = useState<'expenses' | 'settle'>('expenses');
+  const [toast, setToast] = useState<string | null>(null);
+  
+  // Sync Status
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isSocketConnected, setIsSocketConnected] = useState(socket.connected);
   
   // Editing State
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [isEditingEvent, setIsEditingEvent] = useState(false);
+  
+  // Ref for subscription cleanup
+  const unsubscribeRef = React.useRef<(() => void) | null>(null);
 
   // --- EFFECTS ---
 
@@ -62,7 +75,31 @@ const App: React.FC = () => {
     localStorage.setItem('bill-splitter-history', JSON.stringify(history));
   }, [history]);
 
-  // 3. Tab reset
+  // 3. Network & Socket Status Monitoring
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    const handleConnect = () => setIsSocketConnected(true);
+    const handleDisconnect = () => setIsSocketConnected(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+
+    // Initial check
+    setIsOnline(navigator.onLine);
+    setIsSocketConnected(socket.connected);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+    };
+  }, []);
+
+  // 4. Tab reset
   useEffect(() => {
     if (activeEvent) {
       setCurrentTab('expenses');
@@ -79,10 +116,13 @@ const App: React.FC = () => {
         id: event.id, 
         name: event.name, 
         lastVisited: Date.now(),
+        createdAt: event.createdAt || Date.now(), // Fallback for legacy events
         memberCount: event.members.length,
         memberAvatars: event.members.slice(0, 4).map(m => m.avatarUrl)
       };
-      return [newItem, ...filtered].slice(0, 10);
+      // Sort by createdAt descending (newest first)
+      const newHistory = [newItem, ...filtered].sort((a, b) => b.createdAt - a.createdAt);
+      return newHistory.slice(0, 10);
     });
   };
 
@@ -106,8 +146,20 @@ const App: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
+
   // --- CORE LOGIC: LOAD EVENT (SUBSCRIBE) ---
   const loadEvent = (id: string) => {
+    // Cleanup previous subscription
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+    }
+
     setIsLoading(true);
     setErrorMsg(null);
     
@@ -131,46 +183,64 @@ const App: React.FC = () => {
           return h;
         }));
       } else {
-        setErrorMsg("未找到该活动，可能已被删除。");
-        setActiveEvent(null);
+        // If we are already on the home screen (activeEvent is null), don't show error
+        // This prevents the "Event not found" message when we just deleted it ourselves
+        setActiveEvent(prev => {
+          if (prev) {
+            setErrorMsg("活动已被删除。");
+          }
+          return null;
+        });
         removeFromHistory(id);
       }
     });
 
-    return unsubscribe;
+    unsubscribeRef.current = unsubscribe;
   };
 
   // --- HANDLERS ---
 
   const handleCreateOrUpdateEvent = async (eventData: PartyEvent) => {
     try {
+      // Optimistic update for editing
+      if (isEditingEvent) {
+        setActiveEvent(eventData);
+      }
+      
       await saveEventToCloud(eventData);
       
       if (!isEditingEvent) {
         // New Event
         loadEvent(eventData.id);
+        setToast("活动已创建");
+      } else {
+        setToast("活动已更新");
       }
       setShowEventModal(false);
       setIsEditingEvent(false);
     } catch (e) {
-      alert("保存失败，请检查网络");
-      console.error(e);
+      console.error("Save event error:", e);
     }
   };
 
   const handleDeleteEvent = async (eventId: string) => {
-    if (confirm("确定要删除这个活动吗？删除后无法恢复。")) {
-      try {
-        await deleteEventFromCloud(eventId);
-        removeFromHistory(eventId);
-        setActiveEvent(null);
-        setShowEventModal(false);
-        setIsEditingEvent(false);
-        // Clear URL safely
-        safeUpdateUrl(null);
-      } catch (e) {
-        alert("删除失败");
+    try {
+      // Unsubscribe first to prevent the "Event not found" error message
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
       }
+
+      await deleteEventFromCloud(eventId);
+      removeFromHistory(eventId);
+      setActiveEvent(null);
+      setShowEventModal(false);
+      setIsEditingEvent(false);
+      setToast("活动已成功删除");
+      // Clear URL safely
+      safeUpdateUrl(null);
+    } catch (e) {
+      console.error("Delete event error:", e);
     }
   };
 
@@ -183,12 +253,16 @@ const App: React.FC = () => {
 
     const updatedEvent = { ...activeEvent, expenses: newExpenses };
     
+    // Optimistic Update
+    setActiveEvent(updatedEvent);
+    
     try {
       await saveEventToCloud(updatedEvent);
+      setToast("账单已保存");
       setShowExpenseModal(false);
       setEditingExpenseId(null);
     } catch (e) {
-      alert("保存失败");
+      console.error("Save expense error:", e);
     }
   };
 
@@ -200,19 +274,45 @@ const App: React.FC = () => {
       expenses: activeEvent.expenses.filter(e => e.id !== expenseId)
     };
 
+    // Optimistic Update
+    setActiveEvent(updatedEvent);
+
     try {
       await saveEventToCloud(updatedEvent);
+      setToast("账单已删除");
       setShowExpenseModal(false);
       setEditingExpenseId(null);
     } catch (e) {
-      alert("删除失败");
+      console.error("Delete expense error:", e);
     }
   };
 
   const goHome = () => {
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+      unsubscribeRef.current = null;
+    }
     setActiveEvent(null);
     // Clear URL safely
     safeUpdateUrl(null);
+  };
+
+  const handleJoinCode = async (code: string) => {
+    if (!code.trim()) return;
+    
+    setIsJoining(true);
+    const cleanCode = code.trim().toUpperCase();
+    loadEvent(cleanCode);
+    setToast("正在加入活动...");
+    
+    // Reset after a short delay to show loading state
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        setIsJoining(false);
+        setJoinCode('');
+        resolve();
+      }, 800);
+    });
   };
 
   // --- VIEWS ---
@@ -244,17 +344,39 @@ const App: React.FC = () => {
                <h1 className="text-3xl font-black text-gray-900 tracking-tight leading-none flex items-center">
                   ButterFly <span className="text-blue-600 ml-2">Bill</span>
                </h1>
-               <p className="text-xs text-gray-400 font-medium mt-1 flex items-center">
-                  <Cloud size={10} className="mr-1" /> 云端同步中
-               </p>
+               <div className="mt-1 flex items-center">
+                  {!isOnline ? (
+                    <p className="text-[10px] text-red-500 font-bold flex items-center bg-red-50 px-2 py-0.5 rounded-full">
+                      <CloudOff size={10} className="mr-1" /> 网络已断开 (本地模式)
+                    </p>
+                  ) : !isSocketConnected ? (
+                    <p className="text-[10px] text-amber-500 font-bold flex items-center bg-amber-50 px-2 py-0.5 rounded-full">
+                      <Loader2 size={10} className="mr-1 animate-spin" /> 正在连接云端...
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-green-600 font-bold flex items-center bg-green-50 px-2 py-0.5 rounded-full">
+                      <CheckCircle2 size={10} className="mr-1" /> 云端已同步
+                    </p>
+                  )}
+               </div>
             </div>
           </header>
 
           {errorMsg && (
-             <div className="mb-6 p-4 rounded-xl bg-red-100 text-red-700 flex items-center shadow-sm">
+             <div className="mb-6 p-4 rounded-xl bg-red-100 text-red-700 flex items-center shadow-sm animate-in fade-in slide-in-from-top-2">
                <AlertTriangle size={20} className="mr-2"/>
                <span className="font-bold text-sm">{errorMsg}</span>
+               <button onClick={() => setErrorMsg(null)} className="ml-auto p-1 hover:bg-red-200 rounded-full">
+                 <X size={14} />
+               </button>
              </div>
+          )}
+
+          {toast && (
+            <div className="fixed top-28 left-1/2 -translate-x-1/2 z-50 bg-gray-900/90 backdrop-blur-md text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center space-x-2 animate-in fade-in slide-in-from-top-4 duration-300">
+              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+              <span className="text-sm font-bold">{toast}</span>
+            </div>
           )}
 
           {hasHistory ? (
@@ -315,12 +437,14 @@ const App: React.FC = () => {
                     </div>
                   ))}
                   
-                  {/* Weakened Create Button */}
+                  {/* Redesigned Create Button */}
                   <button 
                     onClick={() => { setIsEditingEvent(false); setShowEventModal(true); }}
-                    className="w-full py-4 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 font-medium hover:border-blue-300 hover:text-blue-500 hover:bg-blue-50/50 transition-all flex items-center justify-center mt-4 text-sm"
+                    className="w-full py-5 rounded-[24px] bg-white border-2 border-dashed border-gray-200 text-gray-500 font-bold hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-all flex items-center justify-center mt-6 shadow-sm group"
                   >
-                    <Plus size={16} className="mr-2" />
+                    <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center mr-3 group-hover:bg-blue-100 transition-colors">
+                      <Plus size={18} className="text-gray-400 group-hover:text-blue-600" />
+                    </div>
                     新建其他活动
                   </button>
                </div>
@@ -330,19 +454,34 @@ const App: React.FC = () => {
                {/* Empty State */}
                <button 
                  onClick={() => { setIsEditingEvent(false); setShowEventModal(true); }}
-                 className="w-full py-12 border-2 border-dashed border-blue-200 bg-white/60 rounded-3xl flex flex-col items-center justify-center text-blue-600 hover:bg-blue-50 hover:border-blue-300 hover:shadow-lg transition-all group"
+                 className="w-full py-16 border-2 border-dashed border-blue-200 bg-white/80 rounded-[32px] flex flex-col items-center justify-center text-blue-600 hover:bg-blue-50 hover:border-blue-300 hover:shadow-xl transition-all group relative overflow-hidden"
                >
-                 <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                   <Plus size={32} className="text-blue-600" />
+                 <div className="absolute top-0 right-0 w-24 h-24 bg-blue-50 rounded-full -mr-12 -mt-12 opacity-50 group-hover:scale-150 transition-transform duration-500" />
+                 <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-inner">
+                   <Plus size={40} className="text-blue-600" />
                  </div>
-                 <span className="text-lg font-bold text-blue-600 mt-2">创建你的第一个分账活动</span>
+                 <span className="text-xl font-black text-blue-600 mt-2 tracking-tight">创建你的第一个分账活动</span>
+                 <p className="text-xs text-blue-600 mt-2 font-medium">开启云端实时同步分账体验</p>
                </button>
-               
-               <div className="mt-8 text-center">
-                  <p className="text-gray-300 text-sm">暂无活动记录</p>
-               </div>
             </div>
           )}
+
+          {/* Join with Code Section (Redesigned) */}
+          <div className="mt-8 flex flex-col items-center">
+            <button 
+              onClick={() => setShowJoinModal(true)}
+              className="px-8 py-3 rounded-full bg-gray-200/50 text-gray-500 text-sm font-bold hover:bg-gray-200 hover:text-gray-700 transition-all flex items-center"
+            >
+              <Users size={16} className="mr-2" />
+              加入朋友创建的活动
+            </button>
+          </div>
+        </div>
+
+        <div className="py-8 text-center">
+          <p className="text-gray-400/60 text-[10px] tracking-widest uppercase font-medium">
+            ButterFly Bill · 记录在一起的每次精彩
+          </p>
         </div>
 
         {showEventModal && (
@@ -352,6 +491,12 @@ const App: React.FC = () => {
             initialEvent={undefined} 
           />
         )}
+
+        <JoinEventModal 
+          isOpen={showJoinModal}
+          onClose={() => setShowJoinModal(false)}
+          onJoin={handleJoinCode}
+        />
       </div>
     );
   }
@@ -370,15 +515,31 @@ const App: React.FC = () => {
             <ArrowLeft size={20} className="mr-1" />
             首页
           </button>
-          <h1 className="text-lg font-bold truncate max-w-[140px]">{activeEvent.name}</h1>
+          <div className="flex-1 flex justify-center px-2 min-w-0">
+            <div className="flex items-center space-x-1.5 min-w-0">
+              <h1 className="text-lg font-bold truncate">{activeEvent.name}</h1>
+              <div className="flex-shrink-0">
+                {!isOnline ? (
+                  <CloudOff size={16} className="text-red-500" />
+                ) : !isSocketConnected ? (
+                  <div className="flex items-center text-blue-500">
+                    <Cloud size={16} />
+                    <span className="text-[10px] font-black ml-0.5 leading-none animate-pulse">...</span>
+                  </div>
+                ) : (
+                  <Cloud size={16} className="text-green-500" />
+                )}
+              </div>
+            </div>
+          </div>
           
           <div className="flex space-x-2">
              <button 
                onClick={() => setShowShareModal(true)}
                className="h-8 px-3 flex items-center justify-center text-white bg-blue-600 hover:bg-blue-700 rounded-full transition-colors text-xs font-bold shadow-md shadow-blue-200"
-               title="邀请协作"
+               title="共享口令"
              >
-               <Share2 size={14} className="mr-1" /> 邀请
+               <Share2 size={14} className="mr-1" /> 共享口令
              </button>
              <button 
                onClick={() => { setIsEditingEvent(true); setShowEventModal(true); }}
@@ -414,7 +575,7 @@ const App: React.FC = () => {
                <div className="flex flex-col items-center justify-center pt-20 text-gray-400">
                   <Receipt size={64} className="mb-4 opacity-20" />
                   <p>还没有账单，记一笔吧！</p>
-                  <p className="text-xs mt-2 text-blue-400 bg-blue-50 px-3 py-1 rounded-full">数据会实时同步给所有成员</p>
+                  <p className="text-xs mt-2 text-blue-600 bg-blue-50 px-3 py-1 rounded-full">数据会实时同步给所有成员</p>
                </div>
             ) : (
               [...activeEvent.expenses].reverse().map(expense => {
@@ -448,7 +609,7 @@ const App: React.FC = () => {
       </div>
 
       {currentTab === 'expenses' && (
-        <div className="absolute bottom-8 left-0 right-0 flex justify-center z-20 pointer-events-none">
+        <div className="absolute bottom-20 left-0 right-0 flex justify-center z-20 pointer-events-none">
           <button 
             onClick={() => { setEditingExpenseId(null); setShowExpenseModal(true); }}
             className="pointer-events-auto bg-black text-white px-6 py-3 rounded-full font-bold shadow-xl shadow-gray-400/50 flex items-center hover:scale-105 transition-transform"
@@ -483,6 +644,12 @@ const App: React.FC = () => {
           onClose={() => setShowShareModal(false)}
         />
       )}
+
+      <div className="py-6 text-center">
+        <p className="text-gray-400/60 text-[10px] tracking-widest uppercase font-medium">
+          ButterFly Bill · 记录在一起的每次精彩
+        </p>
+      </div>
     </div>
   );
 };

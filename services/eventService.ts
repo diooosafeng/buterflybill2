@@ -1,12 +1,15 @@
-import { db, isFirebaseConfigured } from "./firebase";
-import { doc, setDoc, onSnapshot, updateDoc, deleteDoc } from "firebase/firestore";
+import { io, Socket } from "socket.io-client";
 import { PartyEvent } from "../types";
 
 const COLLECTION_NAME = "events";
 const LOCAL_STORAGE_KEY_PREFIX = "offline_event_";
 
+// Initialize Socket.io client
+// In development, the server is on the same host/port
+export const socket: Socket = io();
+
 /**
- * Creates or overwrites an event in Firestore or LocalStorage.
+ * Creates or overwrites an event in the cloud (Socket.io) and LocalStorage.
  */
 export const saveEventToCloud = async (event: PartyEvent) => {
   const dataToSave = {
@@ -14,18 +17,10 @@ export const saveEventToCloud = async (event: PartyEvent) => {
     lastUpdated: Date.now()
   };
 
-  if (isFirebaseConfigured && db) {
-    try {
-      const eventRef = doc(db, COLLECTION_NAME, event.id);
-      await setDoc(eventRef, dataToSave);
-      return;
-    } catch (error) {
-      console.error("Error saving event to cloud:", error);
-      throw error;
-    }
-  }
+  // 1. Sync to Cloud via Socket
+  socket.emit("update-event", dataToSave);
 
-  // Fallback: LocalStorage
+  // 2. Fallback: LocalStorage
   localStorage.setItem(LOCAL_STORAGE_KEY_PREFIX + event.id, JSON.stringify(dataToSave));
   // Notify listeners in same window
   window.dispatchEvent(new Event('local-storage-update'));
@@ -36,50 +31,53 @@ export const saveEventToCloud = async (event: PartyEvent) => {
  * Returns an unsubscribe function.
  */
 export const subscribeToEvent = (eventId: string, onUpdate: (event: PartyEvent | null) => void) => {
-  // 1. Firebase Mode
-  if (isFirebaseConfigured && db) {
-    const eventRef = doc(db, COLLECTION_NAME, eventId);
-    return onSnapshot(eventRef, (docSnap) => {
-      if (docSnap.exists()) {
-        onUpdate(docSnap.data() as PartyEvent);
-      } else {
-        onUpdate(null);
-      }
-    }, (error) => {
-      console.error("Error listening to event:", error);
-      onUpdate(null);
-    });
-  }
+  // 1. Join the room on the server
+  socket.emit("join-event", eventId);
 
-  // 2. LocalStorage Mode (Mock Subscription)
+  // 2. Listen for updates from the server
+  const handleUpdate = (event: PartyEvent) => {
+    if (event.id === eventId) {
+      onUpdate(event);
+      // Also update local storage to keep it in sync
+      localStorage.setItem(LOCAL_STORAGE_KEY_PREFIX + eventId, JSON.stringify(event));
+    }
+  };
+
+  const handleDelete = (deletedId: string) => {
+    if (deletedId === eventId) {
+      onUpdate(null);
+      localStorage.removeItem(LOCAL_STORAGE_KEY_PREFIX + eventId);
+    }
+  };
+
+  socket.on("event-update", handleUpdate);
+  socket.on("event-deleted", handleDelete);
+
+  // 3. LocalStorage Mode (Initial load and offline fallback)
   const loadFromLocal = () => {
     try {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY_PREFIX + eventId);
       if (stored) {
         onUpdate(JSON.parse(stored));
-      } else {
-        onUpdate(null);
       }
     } catch (e) {
       console.error("Error reading local event:", e);
-      onUpdate(null);
     }
   };
 
-  // Initial load
+  // Initial load from local storage while waiting for server
   loadFromLocal();
 
-  // Listen for changes
-  const handler = () => loadFromLocal();
-  
-  // 'local-storage-update' is our custom event for same-window updates
-  window.addEventListener('local-storage-update', handler);
-  // 'storage' event fires when other tabs update LocalStorage
-  window.addEventListener('storage', handler);
+  // Listen for changes in other tabs AND local updates in same tab
+  const storageHandler = () => loadFromLocal();
+  window.addEventListener('storage', storageHandler);
+  window.addEventListener('local-storage-update', storageHandler);
 
   return () => {
-    window.removeEventListener('local-storage-update', handler);
-    window.removeEventListener('storage', handler);
+    socket.off("event-update", handleUpdate);
+    socket.off("event-deleted", handleDelete);
+    window.removeEventListener('storage', storageHandler);
+    window.removeEventListener('local-storage-update', storageHandler);
   };
 };
 
@@ -87,33 +85,27 @@ export const subscribeToEvent = (eventId: string, onUpdate: (event: PartyEvent |
  * Updates just specific fields of an event
  */
 export const updateEventFields = async (eventId: string, fields: Partial<PartyEvent>) => {
-  if (isFirebaseConfigured && db) {
-    const eventRef = doc(db, COLLECTION_NAME, eventId);
-    await updateDoc(eventRef, {
-      ...fields,
-      lastUpdated: Date.now()
-    });
-    return;
-  }
-
   // LocalStorage Fallback
   const stored = localStorage.getItem(LOCAL_STORAGE_KEY_PREFIX + eventId);
   if (stored) {
     const event = JSON.parse(stored);
     const updated = { ...event, ...fields, lastUpdated: Date.now() };
-    localStorage.setItem(LOCAL_STORAGE_KEY_PREFIX + eventId, JSON.stringify(updated));
-    window.dispatchEvent(new Event('local-storage-update'));
+    saveEventToCloud(updated);
   }
 };
 
 export const deleteEventFromCloud = async (eventId: string) => {
-  if (isFirebaseConfigured && db) {
-    const eventRef = doc(db, COLLECTION_NAME, eventId);
-    await deleteDoc(eventRef);
-    return;
-  }
+  // 1. Sync to Cloud
+  socket.emit("delete-event", eventId);
 
-  // LocalStorage Fallback
+  // 2. LocalStorage Fallback
   localStorage.removeItem(LOCAL_STORAGE_KEY_PREFIX + eventId);
   window.dispatchEvent(new Event('local-storage-update'));
 }
+
+/**
+ * Generates a short, easy-to-type passcode for an event
+ */
+export const generateEventPasscode = () => {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+};

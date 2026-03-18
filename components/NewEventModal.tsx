@@ -3,6 +3,7 @@ import { Member, PartyEvent } from '../types';
 import { X, Plus, Trash2, Save, AlertCircle, Calendar } from 'lucide-react';
 import { getRandomAvatar } from '../utils/avatarUtils';
 import { generateUUID } from '../utils/uuid';
+import { generateEventPasscode } from '../services/eventService';
 
 interface NewEventModalProps {
   onClose: () => void;
@@ -70,10 +71,11 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({ onClose, onSave, o
     }
 
     const eventToSave: PartyEvent = {
-      id: initialEvent ? initialEvent.id : generateUUID(),
+      id: initialEvent ? initialEvent.id : generateEventPasscode(),
       name,
       startDate: new Date(startDate).getTime(),
       endDate: new Date(endDate).getTime(),
+      createdAt: initialEvent ? initialEvent.createdAt : Date.now(),
       members: members,
       expenses: initialEvent ? initialEvent.expenses : [], // Preserve expenses if editing
       isSettled: initialEvent ? initialEvent.isSettled : false
@@ -99,20 +101,18 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({ onClose, onSave, o
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      {/* CSS to hide the native calendar picker indicator so only our custom icon shows */}
+      {/* CSS to ensure the picker trigger is accessible and looks good on mobile */}
       <style>{`
         .custom-date-input::-webkit-calendar-picker-indicator {
-          background: transparent;
-          bottom: 0;
-          color: transparent;
-          cursor: pointer;
-          height: auto;
-          left: 0;
           position: absolute;
-          right: 0;
           top: 0;
-          width: auto;
-          display: none;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          width: 100%;
+          height: 100%;
+          opacity: 0;
+          cursor: pointer;
         }
       `}</style>
 
@@ -141,25 +141,35 @@ export const NewEventModal: React.FC<NewEventModalProps> = ({ onClose, onSave, o
           <div className="grid grid-cols-2 gap-4 mb-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">开始日</label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={18} />
+              <div className="relative group">
+                <div className="w-full p-3 pl-10 bg-gray-50 rounded-xl border border-transparent group-hover:border-blue-200 transition-all flex items-center min-h-[48px]">
+                  <span className="text-gray-900 font-medium">
+                    {startDate ? startDate.replace(/-/g, '/') : '选择日期'}
+                  </span>
+                </div>
+                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500 z-10" size={18} />
                 <input 
                   type="date" 
                   value={startDate}
                   onChange={e => setStartDate(e.target.value)}
-                  className="custom-date-input w-full p-3 pl-10 bg-gray-50 rounded-xl outline-none"
+                  className="custom-date-input absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
                 />
               </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">结算日</label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={18} />
+              <div className="relative group">
+                <div className="w-full p-3 pl-10 bg-gray-50 rounded-xl border border-transparent group-hover:border-blue-200 transition-all flex items-center min-h-[48px]">
+                  <span className="text-gray-900 font-medium">
+                    {endDate ? endDate.replace(/-/g, '/') : '选择日期'}
+                  </span>
+                </div>
+                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500 z-10" size={18} />
                 <input 
                   type="date" 
                   value={endDate}
                   onChange={e => setEndDate(e.target.value)}
-                  className="custom-date-input w-full p-3 pl-10 bg-gray-50 rounded-xl outline-none"
+                  className="custom-date-input absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
                 />
               </div>
             </div>

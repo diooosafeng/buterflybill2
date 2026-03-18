@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { PartyEvent } from '../types';
 import { X, Copy, Check, Info } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
 
 interface ShareEventModalProps {
   event: PartyEvent;
@@ -11,22 +10,8 @@ interface ShareEventModalProps {
 export const ShareEventModal: React.FC<ShareEventModalProps> = ({ event, onClose }) => {
   const [copied, setCopied] = useState(false);
 
-  // Safely construct share URL (handles standard and some sandbox envs)
-  const getShareUrl = () => {
-    try {
-      const url = new URL(window.location.href);
-      url.searchParams.set('eventId', event.id);
-      return url.toString();
-    } catch (e) {
-      // Fallback for extreme environments where URL parsing might fail
-      return `${window.location.href.split('?')[0]}?eventId=${event.id}`;
-    }
-  };
-
-  const shareUrl = getShareUrl();
-
   const handleCopy = () => {
-    navigator.clipboard.writeText(shareUrl);
+    navigator.clipboard.writeText(event.id);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -45,24 +30,20 @@ export const ShareEventModal: React.FC<ShareEventModalProps> = ({ event, onClose
 
         <div className="p-8 flex flex-col items-center pt-10">
           
-          <h2 className="text-xl font-bold text-gray-900 mb-6">扫码加入活动</h2>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">共享口令</h2>
+          <p className="text-sm text-gray-400 mb-6">让好友输入下方口令加入活动</p>
 
-          {/* QR Code Area - Clean, no icon */}
-          <div className="bg-white p-2 rounded-xl border border-gray-100 mb-6 shadow-sm">
-            <QRCodeSVG 
-              value={shareUrl} 
-              size={180} 
-              level={"L"} // Low error correction is sufficient for clean QR
-              includeMargin={true}
-            />
+          {/* Passcode Display */}
+          <div className="bg-blue-50 px-6 py-4 rounded-2xl mb-6 flex flex-col items-center border border-blue-100 w-full">
+            <span className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-1">活动口令</span>
+            <span className="text-3xl font-black text-blue-600 tracking-[0.2em]">{event.id}</span>
           </div>
           
           {/* Sync Info */}
           <div className="flex items-start space-x-3 text-xs text-gray-500 bg-gray-50 p-4 rounded-xl mb-6 text-left w-full border border-gray-100">
             <Info size={16} className="flex-shrink-0 mt-0.5 text-blue-500" />
             <p>
-              <span className="font-bold text-gray-900">云端实时同步：</span>
-              转发此码或链接给好友，大家可同时记账，数据自动汇总。
+              多人共同编辑活动，数据将云端同步记录和计算。
             </p>
           </div>
 
@@ -76,11 +57,11 @@ export const ShareEventModal: React.FC<ShareEventModalProps> = ({ event, onClose
           >
             {copied ? (
               <>
-                <Check size={18} className="mr-2" /> 已复制链接
+                <Check size={18} className="mr-2" /> 已复制口令
               </>
             ) : (
               <>
-                <Copy size={18} className="mr-2" /> 复制邀请链接
+                <Copy size={18} className="mr-2" /> 复制口令
               </>
             )}
           </button>

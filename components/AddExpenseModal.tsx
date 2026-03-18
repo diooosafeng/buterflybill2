@@ -195,10 +195,10 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ members, onClo
                 <button
                   key={method}
                   onClick={() => setPayMethod(method)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors
+                  className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all
                     ${payMethod === method
-                      ? 'bg-gray-900 text-white border-gray-900'
-                      : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-100'
+                      : 'bg-white text-gray-500 border-gray-100 hover:bg-gray-50'}`}
                 >
                   {method}
                 </button>
