@@ -5,8 +5,10 @@ const COLLECTION_NAME = "events";
 const LOCAL_STORAGE_KEY_PREFIX = "offline_event_";
 
 // Initialize Socket.io client
-// In development, the server is on the same host/port
-export const socket: Socket = io();
+// Force websocket transport to avoid session affinity issues on serverless platforms
+export const socket: Socket = io({
+  transports: ['websocket']
+});
 
 /**
  * Creates or overwrites an event in the cloud (Socket.io) and LocalStorage.
