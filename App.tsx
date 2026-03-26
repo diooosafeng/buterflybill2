@@ -51,6 +51,13 @@ const App: React.FC = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSocketConnected, setIsSocketConnected] = useState(false);
   
+  // Check if Supabase is properly configured
+  const isSupabaseConfigured = useMemo(() => {
+    const url = import.meta.env.VITE_SUPABASE_URL;
+    const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    return url && key && !url.includes('placeholder');
+  }, []);
+  
   // Editing State
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [isEditingEvent, setIsEditingEvent] = useState(false);
@@ -345,6 +352,10 @@ const App: React.FC = () => {
                   {!isOnline ? (
                     <p className="text-[10px] text-red-500 font-bold flex items-center bg-red-50 px-2 py-0.5 rounded-full">
                       <CloudOff size={10} className="mr-1" /> 网络已断开 (本地模式)
+                    </p>
+                  ) : !isSupabaseConfigured ? (
+                    <p className="text-[10px] text-red-500 font-bold flex items-center bg-red-50 px-2 py-0.5 rounded-full">
+                      <AlertTriangle size={10} className="mr-1" /> 未配置云端
                     </p>
                   ) : !isSocketConnected ? (
                     <p className="text-[10px] text-amber-500 font-bold flex items-center bg-amber-50 px-2 py-0.5 rounded-full">

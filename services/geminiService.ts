@@ -1,36 +1,39 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ExpenseCategory } from "../types";
 
-// The API key must be obtained exclusively from the environment variable process.env.API_KEY.
-// We assume process.env.API_KEY is pre-configured and accessible.
-// Helper to get env variable safely in both dev and production
-const getEnv = (key: string) => {
-  // Vite uses import.meta.env for client-side variables
+// The API key must be obtained exclusively from the environment variable.
+// In Vite, we must use static access for environment variables to be correctly replaced during build.
+const getApiKey = () => {
+  // 1. Check for Vite-prefixed key (Standard for Vercel/Vite deployments)
   // @ts-ignore
-  const viteEnv = import.meta.env?.[key];
-  if (viteEnv) return viteEnv;
+  const viteKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (viteKey) return viteKey;
 
-  // Fallback for other environments
+  // 2. Check for AI Studio provided keys (AI Studio environment)
   try {
-    if (typeof process !== 'undefined' && process.env?.[key]) {
-      return process.env[key];
+    // @ts-ignore
+    if (typeof process !== 'undefined') {
+      // @ts-ignore
+      return process.env.GEMINI_API_KEY || process.env.API_KEY || '';
     }
   } catch (e) {}
   
   return '';
 };
 
-// Check for multiple possible keys: VITE_GEMINI_API_KEY (Vercel) or GEMINI_API_KEY (AI Studio)
-const apiKey = getEnv("VITE_GEMINI_API_KEY") || getEnv("GEMINI_API_KEY");
+const apiKey = getApiKey();
+if (!apiKey) {
+  console.warn("⚠️ Gemini API Key is missing. AI features will be disabled. Please set VITE_GEMINI_API_KEY in your environment.");
+}
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export const categorizeExpense = async (description: string): Promise<ExpenseCategory> => {
   if (!ai || !apiKey) {
-    console.warn("Gemini API Key missing. Please set VITE_GEMINI_API_KEY in Vercel settings.");
     return ExpenseCategory.Other;
   }
 
   try {
+    console.log(`🤖 AI Categorizing: "${description}"...`);
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: `Categorize the following expense description into one of these exact categories: "餐饮", "住宿", "出行", "游览", "购物", "娱乐", "其他". Description: "${description}"`,
@@ -51,13 +54,17 @@ export const categorizeExpense = async (description: string): Promise<ExpenseCat
     });
 
     const jsonText = response.text;
-    if (!jsonText) return ExpenseCategory.Other;
+    if (!jsonText) {
+      console.warn("🤖 AI returned empty response");
+      return ExpenseCategory.Other;
+    }
 
     const data = JSON.parse(jsonText);
+    console.log(`✅ AI Categorized as: ${data.category}`);
     return data.category as ExpenseCategory;
 
   } catch (error) {
-    console.error("Gemini classification failed:", error);
+    console.error("❌ Gemini classification failed:", error);
     return ExpenseCategory.Other;
   }
 };

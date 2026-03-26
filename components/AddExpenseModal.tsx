@@ -53,14 +53,22 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ members, onClo
     if (initialExpense && !useAI) return; 
 
     const timer = setTimeout(async () => {
-      if (description.length > 2) {
+      if (description.trim().length >= 2) {
+        console.log(`[AI] Triggering categorization for: "${description}"`);
         setIsCategorizing(true);
         try {
           const aiCategory = await categorizeExpense(description);
-          setCategory(aiCategory);
+          console.log(`[AI] Suggested category: ${aiCategory}`);
+          if (aiCategory) {
+            setCategory(aiCategory);
+          }
+        } catch (err) {
+          console.error("[AI] Error in categorization:", err);
         } finally {
           setIsCategorizing(false);
         }
+      } else {
+        console.log(`[AI] Description too short (${description.trim().length}), skipping.`);
       }
     }, 1000); 
 

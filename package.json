@@ -13,17 +13,21 @@
   "dependencies": {
     "@google/genai": "latest",
     "@supabase/supabase-js": "^2.99.2",
+    "@tailwindcss/vite": "^4.0.0",
     "@types/express": "^5.0.6",
+    "autoprefixer": "^10.4.27",
     "express": "^5.2.1",
     "firebase": "^10.8.0",
     "lucide-react": "^0.344.0",
     "lz-string": "^1.5.0",
+    "postcss": "^8.5.8",
     "qrcode.react": "^3.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.12.2",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
+    "tailwindcss": "^3.4.19",
     "tsx": "^4.21.0"
   },
   "devDependencies": {

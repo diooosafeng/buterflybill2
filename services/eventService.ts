@@ -5,22 +5,20 @@ const COLLECTION_NAME = "events";
 const LOCAL_STORAGE_KEY_PREFIX = "offline_event_";
 
 // Initialize Supabase Client
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://placeholder-project.supabase.co";
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "placeholder-key";
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // Global connection state
-let isGlobalConnected = supabase.realtime.isConnected();
+let isGlobalConnected = false;
 
 // Connection status listeners
 type ConnectionCallback = (isConnected: boolean) => void;
 const connectionListeners: ConnectionCallback[] = [];
 
 export const onConnectionChange = (callback: ConnectionCallback) => {
-  // Immediately call with current state
   callback(isGlobalConnected);
-  
   connectionListeners.push(callback);
   return () => {
     const index = connectionListeners.indexOf(callback);
@@ -29,15 +27,22 @@ export const onConnectionChange = (callback: ConnectionCallback) => {
 };
 
 const notifyConnectionChange = (isConnected: boolean) => {
+  if (isGlobalConnected === isConnected) return;
   isGlobalConnected = isConnected;
   connectionListeners.forEach(cb => cb(isConnected));
 };
 
-// Listen to global realtime connection events
-if (supabaseUrl && supabaseAnonKey) {
-  supabase.realtime.on('open', () => notifyConnectionChange(true));
-  supabase.realtime.on('close', () => notifyConnectionChange(false));
-  supabase.realtime.on('error', () => notifyConnectionChange(false));
+// Use a dedicated global channel to monitor connection status reliably
+if (supabaseUrl && supabaseAnonKey && !supabaseUrl.includes('placeholder')) {
+  supabase
+    .channel('global-connection-monitor')
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        notifyConnectionChange(true);
+      } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+        notifyConnectionChange(false);
+      }
+    });
 }
 
 /**

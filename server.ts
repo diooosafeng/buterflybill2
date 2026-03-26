@@ -11,8 +11,8 @@ const __dirname = path.dirname(__filename);
 
 // Initialize Supabase Client (Server-side)
 // We use the service role key to bypass RLS since we're using passcodes for access control
-const supabaseUrl = process.env.SUPABASE_URL || "";
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const supabaseUrl = process.env.SUPABASE_URL || "https://placeholder-project.supabase.co";
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "placeholder-key";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function startServer() {
