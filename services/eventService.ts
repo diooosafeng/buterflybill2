@@ -10,11 +10,17 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+// Global connection state
+let isGlobalConnected = supabase.realtime.isConnected();
+
 // Connection status listeners
 type ConnectionCallback = (isConnected: boolean) => void;
 const connectionListeners: ConnectionCallback[] = [];
 
 export const onConnectionChange = (callback: ConnectionCallback) => {
+  // Immediately call with current state
+  callback(isGlobalConnected);
+  
   connectionListeners.push(callback);
   return () => {
     const index = connectionListeners.indexOf(callback);
@@ -23,8 +29,16 @@ export const onConnectionChange = (callback: ConnectionCallback) => {
 };
 
 const notifyConnectionChange = (isConnected: boolean) => {
+  isGlobalConnected = isConnected;
   connectionListeners.forEach(cb => cb(isConnected));
 };
+
+// Listen to global realtime connection events
+if (supabaseUrl && supabaseAnonKey) {
+  supabase.realtime.on('open', () => notifyConnectionChange(true));
+  supabase.realtime.on('close', () => notifyConnectionChange(false));
+  supabase.realtime.on('error', () => notifyConnectionChange(false));
+}
 
 /**
  * Creates or overwrites an event in the cloud (Supabase) and LocalStorage.
@@ -122,13 +136,7 @@ export const subscribeToEvent = (eventId: string, onUpdate: (event: PartyEvent |
           }
         }
       )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          notifyConnectionChange(true);
-        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-          notifyConnectionChange(false);
-        }
-      });
+      .subscribe();
   }
 
   return () => {
