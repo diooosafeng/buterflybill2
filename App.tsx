@@ -7,7 +7,7 @@ import { EventCard } from './components/EventCard';
 import { SettlementView } from './components/SettlementView';
 import { ShareEventModal } from './components/ShareEventModal';
 import { JoinEventModal } from './components/JoinEventModal';
-import { saveEventToCloud, subscribeToEvent, deleteEventFromCloud, socket } from './services/eventService';
+import { saveEventToCloud, subscribeToEvent, deleteEventFromCloud, onConnectionChange } from './services/eventService';
 
 // History Item stored locally
 interface HistoryItem {
@@ -49,7 +49,7 @@ const App: React.FC = () => {
   
   // Sync Status
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [isSocketConnected, setIsSocketConnected] = useState(socket.connected);
+  const [isSocketConnected, setIsSocketConnected] = useState(false);
   
   // Editing State
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
@@ -79,23 +79,20 @@ const App: React.FC = () => {
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
-    const handleConnect = () => setIsSocketConnected(true);
-    const handleDisconnect = () => setIsSocketConnected(false);
+    const handleConnectChange = (isConnected: boolean) => setIsSocketConnected(isConnected);
+    
+    const unsubscribeConnection = onConnectionChange(handleConnectChange);
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    socket.on('connect', handleConnect);
-    socket.on('disconnect', handleDisconnect);
 
     // Initial check
     setIsOnline(navigator.onLine);
-    setIsSocketConnected(socket.connected);
 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      socket.off('connect', handleConnect);
-      socket.off('disconnect', handleDisconnect);
+      unsubscribeConnection();
     };
   }, []);
 

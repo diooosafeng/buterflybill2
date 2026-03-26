@@ -1,17 +1,33 @@
-import { io, Socket } from "socket.io-client";
+import { createClient } from '@supabase/supabase-js';
 import { PartyEvent } from "../types";
 
 const COLLECTION_NAME = "events";
 const LOCAL_STORAGE_KEY_PREFIX = "offline_event_";
 
-// Initialize Socket.io client
-// Force websocket transport to avoid session affinity issues on serverless platforms
-export const socket: Socket = io({
-  transports: ['websocket']
-});
+// Initialize Supabase Client
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// Connection status listeners
+type ConnectionCallback = (isConnected: boolean) => void;
+const connectionListeners: ConnectionCallback[] = [];
+
+export const onConnectionChange = (callback: ConnectionCallback) => {
+  connectionListeners.push(callback);
+  return () => {
+    const index = connectionListeners.indexOf(callback);
+    if (index > -1) connectionListeners.splice(index, 1);
+  };
+};
+
+const notifyConnectionChange = (isConnected: boolean) => {
+  connectionListeners.forEach(cb => cb(isConnected));
+};
 
 /**
- * Creates or overwrites an event in the cloud (Socket.io) and LocalStorage.
+ * Creates or overwrites an event in the cloud (Supabase) and LocalStorage.
  */
 export const saveEventToCloud = async (event: PartyEvent) => {
   const dataToSave = {
@@ -19,13 +35,26 @@ export const saveEventToCloud = async (event: PartyEvent) => {
     lastUpdated: Date.now()
   };
 
-  // 1. Sync to Cloud via Socket
-  socket.emit("update-event", dataToSave);
-
-  // 2. Fallback: LocalStorage
+  // 1. Fallback: LocalStorage (Optimistic update)
   localStorage.setItem(LOCAL_STORAGE_KEY_PREFIX + event.id, JSON.stringify(dataToSave));
-  // Notify listeners in same window
   window.dispatchEvent(new Event('local-storage-update'));
+
+  // 2. Sync to Cloud via Supabase
+  if (supabaseUrl && supabaseAnonKey) {
+    try {
+      const { error } = await supabase
+        .from(COLLECTION_NAME)
+        .upsert({ 
+          id: event.id, 
+          data: dataToSave, 
+          updated_at: new Date().toISOString() 
+        });
+        
+      if (error) console.error("Supabase upsert error:", error);
+    } catch (err) {
+      console.error("Error saving to Supabase:", err);
+    }
+  }
 };
 
 /**
@@ -33,29 +62,7 @@ export const saveEventToCloud = async (event: PartyEvent) => {
  * Returns an unsubscribe function.
  */
 export const subscribeToEvent = (eventId: string, onUpdate: (event: PartyEvent | null) => void) => {
-  // 1. Join the room on the server
-  socket.emit("join-event", eventId);
-
-  // 2. Listen for updates from the server
-  const handleUpdate = (event: PartyEvent) => {
-    if (event.id === eventId) {
-      onUpdate(event);
-      // Also update local storage to keep it in sync
-      localStorage.setItem(LOCAL_STORAGE_KEY_PREFIX + eventId, JSON.stringify(event));
-    }
-  };
-
-  const handleDelete = (deletedId: string) => {
-    if (deletedId === eventId) {
-      onUpdate(null);
-      localStorage.removeItem(LOCAL_STORAGE_KEY_PREFIX + eventId);
-    }
-  };
-
-  socket.on("event-update", handleUpdate);
-  socket.on("event-deleted", handleDelete);
-
-  // 3. LocalStorage Mode (Initial load and offline fallback)
+  // 1. LocalStorage Mode (Initial load and offline fallback)
   const loadFromLocal = () => {
     try {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY_PREFIX + eventId);
@@ -67,19 +74,69 @@ export const subscribeToEvent = (eventId: string, onUpdate: (event: PartyEvent |
     }
   };
 
-  // Initial load from local storage while waiting for server
+  // Initial load from local storage
   loadFromLocal();
 
-  // Listen for changes in other tabs AND local updates in same tab
+  // Listen for local updates in same tab or other tabs
   const storageHandler = () => loadFromLocal();
   window.addEventListener('storage', storageHandler);
   window.addEventListener('local-storage-update', storageHandler);
 
+  let channel: any = null;
+
+  // 2. Supabase Realtime Subscription
+  if (supabaseUrl && supabaseAnonKey) {
+    // Fetch initial state from Supabase
+    supabase
+      .from(COLLECTION_NAME)
+      .select("data")
+      .eq("id", eventId)
+      .single()
+      .then(({ data, error }) => {
+        if (data && !error) {
+          onUpdate(data.data);
+          localStorage.setItem(LOCAL_STORAGE_KEY_PREFIX + eventId, JSON.stringify(data.data));
+        } else if (error && error.code !== "PGRST116") {
+          console.error("Supabase fetch error:", error);
+        }
+      });
+
+    // Subscribe to real-time changes
+    channel = supabase
+      .channel(`public:${COLLECTION_NAME}:id=eq.${eventId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: COLLECTION_NAME,
+          filter: `id=eq.${eventId}`
+        },
+        (payload) => {
+          if (payload.eventType === 'DELETE') {
+            onUpdate(null);
+            localStorage.removeItem(LOCAL_STORAGE_KEY_PREFIX + eventId);
+          } else if (payload.new && payload.new.data) {
+            onUpdate(payload.new.data);
+            localStorage.setItem(LOCAL_STORAGE_KEY_PREFIX + eventId, JSON.stringify(payload.new.data));
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          notifyConnectionChange(true);
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          notifyConnectionChange(false);
+        }
+      });
+  }
+
   return () => {
-    socket.off("event-update", handleUpdate);
-    socket.off("event-deleted", handleDelete);
     window.removeEventListener('storage', storageHandler);
     window.removeEventListener('local-storage-update', storageHandler);
+    if (channel) {
+      supabase.removeChannel(channel);
+    }
   };
 };
 
@@ -87,7 +144,6 @@ export const subscribeToEvent = (eventId: string, onUpdate: (event: PartyEvent |
  * Updates just specific fields of an event
  */
 export const updateEventFields = async (eventId: string, fields: Partial<PartyEvent>) => {
-  // LocalStorage Fallback
   const stored = localStorage.getItem(LOCAL_STORAGE_KEY_PREFIX + eventId);
   if (stored) {
     const event = JSON.parse(stored);
@@ -97,12 +153,18 @@ export const updateEventFields = async (eventId: string, fields: Partial<PartyEv
 };
 
 export const deleteEventFromCloud = async (eventId: string) => {
-  // 1. Sync to Cloud
-  socket.emit("delete-event", eventId);
-
-  // 2. LocalStorage Fallback
+  // 1. LocalStorage Fallback
   localStorage.removeItem(LOCAL_STORAGE_KEY_PREFIX + eventId);
   window.dispatchEvent(new Event('local-storage-update'));
+
+  // 2. Sync to Cloud
+  if (supabaseUrl && supabaseAnonKey) {
+    try {
+      await supabase.from(COLLECTION_NAME).delete().eq("id", eventId);
+    } catch (err) {
+      console.error("Error deleting from Supabase:", err);
+    }
+  }
 }
 
 /**
